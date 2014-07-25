@@ -31,7 +31,10 @@
 
 </style>
 <?php
+	# INPUT
 	$text = $_REQUEST['text'];
+	$ari = intval($_REQUEST['ari'], 0);
+	# /INPUT
 
 	error_reporting(E_ALL);
 
@@ -43,9 +46,19 @@
 
 	$spans = [];
 
-	function addSpan($name, $from, $to) {
+	function addSpan($name, $from, $to, $data = null) {
 		global $spans;
-		$spans[] = ['name' => $name, 'from' => $from, 'to' => $to];
+		$spans[] = ['name' => $name, 'from' => $from, 'to' => $to, 'data' => $data];
+	}
+
+	function processSpecialTag($sb, $tag, $from, $to) {
+		global $ari;
+		if ($tag[0] == 'f') {
+			addSpan('footnote', $from, $to, ['arif' => sprintf('0x%08x', ($ari << 8) | (int)(substr($tag, 1)))]);
+		}
+		if ($tag[0] == 'x') {
+			addSpan('xref', $from, $to, ['arif' => sprintf('0x%08x', ($ari << 8) | (int)(substr($tag, 1)))]);
+		}
 	}
 
 	/**
@@ -199,13 +212,14 @@
 				$sb .= "\n";
 				break;
 			case '<':
+				$startSpecialTag = strlen($sb);
 				$inSpecialTag = true;
 				break;
 			case '>':
 				$inSpecialTag = false;
 				break;
 			case '/':
-				processSpecialTag(sb, tag, inlineLinkSpanFactory, ari);
+				processSpecialTag($sb, $tag, $startSpecialTag, strlen($sb));
 				break;
 		}
 
@@ -224,17 +238,20 @@
 				'name' => $span['name'],
 				'type' => 'from',
 				'pos' => $span['from'],
+				'data' => $span['data'],
 			];
 			$sorted[] = [
 				'name' => $span['name'],
 				'type' => 'to',
 				'pos' => $span['to'],
+				'data' => $span['data'],
 			];
 		}
 		usort($sorted, function($a, $b) {
-			if ($b['pos'] == $a['pos']) {
-				if ($b['type'] == 'to') return -1;
-				return 1;
+			if ($b['pos'] == $a['pos'] and $b['name'] == $a['name']) {
+				if ($b['type'] == 'to') return +1;
+				if ($b['type'] == 'from') return -1;
+				return 0;
 			}
 			return $b['pos'] - $a['pos'];
 		});
@@ -254,6 +271,8 @@
 		'leading4' => "<p class='leading4'>",
 		'red' => "<span class='red'>",
 		'italic' => "<span class='italic'>",
+		'footnote' => '<span class="footnote" id="footnote-arif-$ARIF">',
+		'xref' => '<span class="xref" id="xref-arif-$ARIF">',
 	];
 	$toMarks = [
 		'startpara' => "</p>",
@@ -264,11 +283,16 @@
 		'leading4' => "</p>",
 		'red' => "</span>",
 		'italic' => "</span>",
+		'footnote' => "</span>",
+		'xref' => "</span>",
 	];
 
 	foreach ($sorted as $s) {
 		if ($s['type'] == 'from') {
 			$mark = $fromMarks[$s['name']];
+			if ($s['name'] == 'footnote' or $s['name'] == 'xref') {
+				$mark = str_replace('$ARIF', $s['data']['arif'], $mark);
+			}
 		}
 		if ($s['type'] == 'to') {
 			$mark = $toMarks[$s['name']];
@@ -278,6 +302,7 @@
 	$rendered = nl2br($rendered);
 
 	echo '<p>rendered: <div class=box>' . $rendered . '</div>';
+	echo '<p>rendered: <pre>' . htmlspecialchars($rendered) . '</pre>';
 	echo '<p>sb: <pre>' . $sb . '</pre>';
 	echo '<p>spans: <pre>' . var_export($spans, true) . '</pre>';
 	echo '<p>sorted spans: <pre>' . var_export($sorted, true) . '</pre>';
